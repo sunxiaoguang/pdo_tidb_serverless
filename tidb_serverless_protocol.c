@@ -220,8 +220,8 @@ static void populate_types_from_zval(zval *ztypes, pdo_tidb_serverless_result *r
   ZEND_HASH_FOREACH_NUM_KEY_VAL(types, idx, zitem) {
     if (ce == NULL) {
       ce = Z_OBJCE_P(zitem);
-      obj = Z_OBJ_P(zitem);
     }
+    obj = Z_OBJ_P(zitem);
     if ((ztype = zend_read_property_ex(ce, obj, zstr_type, true, NULL))) {
       result->columns[idx].type = pestrndup(Z_STRVAL_P(ztype), Z_STRLEN_P(ztype), is_persistent);
     }
@@ -247,7 +247,9 @@ static void populate_rows_from_zval(zval *zrows, pdo_tidb_serverless_result *res
     row = Z_ARRVAL_P(zitem);
     result->rows[idx] = pecalloc(sizeof(pdo_tidb_serverless_field), result->columns_count, is_persistent);
     ZEND_HASH_FOREACH_NUM_KEY_VAL(row, fidx, zitem) {
-      result->rows[idx][fidx] = pestrndup(Z_STRVAL_P(zitem), Z_STRLEN_P(zitem), is_persistent);
+      if (Z_TYPE_P(zitem) != IS_NULL) {
+        result->rows[idx][fidx] = pestrndup(Z_STRVAL_P(zitem), Z_STRLEN_P(zitem), is_persistent);
+      }
     } ZEND_HASH_FOREACH_END();
   } ZEND_HASH_FOREACH_END();
 }
@@ -257,12 +259,12 @@ static void populate_types_and_rows_from_zval(zend_class_entry *ce, zend_object 
   zval *ztypes = zend_read_property_ex(ce, obj, zstr_types, true, NULL);
   zval *zrows = zend_read_property_ex(ce, obj, zstr_rows, true, NULL);
 
-  if (!ztypes) {
+  if (!ztypes || Z_TYPE_P(ztypes) == IS_NULL) {
     return;
   }
   populate_types_from_zval(ztypes, result, is_persistent);
 
-  if (!zrows) {
+  if (!zrows || Z_TYPE_P(zrows) == IS_NULL) {
     return;
   }
   populate_rows_from_zval(zrows, result, is_persistent);
