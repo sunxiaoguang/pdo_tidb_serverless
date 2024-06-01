@@ -49,6 +49,7 @@ static zend_string *zstr_curlopt_url;
 static zend_string *zstr_curlopt_httpheader;
 static zend_string *zstr_curlopt_postfields;
 static zend_string *zstr_curlinfo_header_size;
+static zend_string *zstr_curlinfo_http_code;
 static zend_string *zstr_content_type;
 static zend_string *zstr_user_agent;
 static zend_string *zstr_query;
@@ -78,6 +79,7 @@ void tidb_serverless_protocol_init()
   REGISTER_STRING2(curlopt_httpheader, "CURLOPT_HTTPHEADER");
   REGISTER_STRING2(curlopt_postfields, "CURLOPT_POSTFIELDS");
   REGISTER_STRING2(curlinfo_header_size, "CURLINFO_HEADER_SIZE");
+  REGISTER_STRING2(curlinfo_http_code, "CURLINFO_HTTP_CODE");
   REGISTER_STRING2(content_type, "Content-Type: application/json");
   REGISTER_STRING2(user_agent, "User-Agent: serverless-js/0.0.10");
   REGISTER_STRING(query);
@@ -108,6 +110,7 @@ void tidb_serverless_protocol_shutdown()
   zend_string_release(zstr_curlopt_httpheader);
   zend_string_release(zstr_curlopt_postfields);
   zend_string_release(zstr_curlinfo_header_size);
+  zend_string_release(zstr_curlinfo_http_code);
   zend_string_release(zstr_content_type);
   zend_string_release(zstr_user_agent);
 }
@@ -346,7 +349,7 @@ static zend_result extract_session_if_any(zval *headers, zend_string **session, 
 static zend_result execute_query(pdo_tidb_serverless_db_handle *handle, zval *headers, zend_string *url, zend_string *username, zend_string *password, const zend_string *sql, zend_string **session, pdo_tidb_serverless_result **rs)
 {
   zval ch, t, zurl, zusername, zpassword, zresponse, zbody;
-  zval zresponse_headers, zresponse_headers_length, zresponse_body, zresponse_object;
+  zval zhttp_code, zresponse_headers, zresponse_headers_length, zresponse_body, zresponse_object;
   zend_result result = SUCCESS;
   ZVAL_STR_COPY(&zusername, username);
   ZVAL_STR_COPY(&zpassword, password);
@@ -369,8 +372,14 @@ static zend_result execute_query(pdo_tidb_serverless_db_handle *handle, zval *he
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_curl_setopt(&ch, zstr_curlopt_httpheader, headers));
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_curl_setopt(&ch, zstr_curlopt_postfields, &zbody));
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_curl_exec(&ch, &zresponse));
+  TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_curl_getinfo(&ch, zstr_curlinfo_http_code, &zhttp_code));
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_curl_getinfo(&ch, zstr_curlinfo_header_size, &zresponse_headers_length));
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_split_str(&zresponse, &zresponse_headers_length, &zresponse_headers, &zresponse_body));
+  if (Z_LVAL(zhttp_code) < 200 || Z_LVAL(zhttp_code) >= 300) {
+    zend_throw_exception_ex(NULL, 0, "Executing query failed: %s", Z_STRVAL(zresponse_body));
+    result = FAILURE;
+    goto cleanup_exit;
+  }
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, extract_session_if_any(&zresponse_headers, session, handle->pdo->is_persistent));
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, deserialize_response(&zresponse_body, &zresponse_object));
 
