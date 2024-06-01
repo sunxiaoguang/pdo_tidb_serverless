@@ -100,7 +100,8 @@ extern void tidb_serverless_protocol_shutdown();
 extern void tidb_serverless_driver_init();
 extern void tidb_serverless_driver_shutdown();
 
-#define STRING_LITERAL_ARGS(x) x, sizeof(x) - 1
+#define STRING_LITERAL_LENGTH(x) sizeof(x) - 1
+#define STRING_LITERAL_ARGS(x) x, STRING_LITERAL_LENGTH(x)
 #define REGISTER_STRING2(x, y) do {                         \
     zstr_##x = zend_string_init(STRING_LITERAL_ARGS(y), 1); \
     zend_string_hash_val(zstr_##x);                         \

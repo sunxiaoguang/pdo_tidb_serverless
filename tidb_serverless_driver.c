@@ -28,7 +28,7 @@
 #define ARRAY_SIZE(X) (sizeof(X) / sizeof(X[0]))
 #define TIDB_SERVERLESS_LAUNCH_TIME (1667232000)
 
-static zend_string *zstr_start_transaction;
+static zend_string *zstr_begin;
 static zend_string *zstr_commit;
 static zend_string *zstr_rollback;
 static zend_string *zstr_select_version;
@@ -36,7 +36,7 @@ static zend_string *zstr_show_sql_mode;
 
 void tidb_serverless_driver_init()
 {
-  REGISTER_STRING2(start_transaction, "START TRANSACTION");
+  REGISTER_STRING2(begin, "BEGIN");
   REGISTER_STRING2(commit, "COMMIT");
   REGISTER_STRING2(rollback, "ROLLBACK");
   REGISTER_STRING2(select_version, "SELECT version()");
@@ -45,7 +45,7 @@ void tidb_serverless_driver_init()
 
 void tidb_serverless_driver_shutdown()
 {
-  zend_string_release(zstr_start_transaction);
+  zend_string_release(zstr_begin);
   zend_string_release(zstr_commit);
   zend_string_release(zstr_rollback);
   zend_string_release(zstr_select_version);
@@ -231,6 +231,14 @@ cleanup_exit:
   return quoted_str;
 }
 
+static void tidb_serverless_handle_reset_session(pdo_tidb_serverless_db_handle *handle)
+{
+  if (handle->zstr_header_session) {
+    zend_string_release(handle->zstr_header_session);
+    handle->zstr_header_session = NULL;
+  }
+}
+
 static bool tidb_serverless_handle_begin(pdo_dbh_t *dbh)
 {
   pdo_tidb_serverless_result *rs = NULL;
@@ -239,8 +247,8 @@ static bool tidb_serverless_handle_begin(pdo_dbh_t *dbh)
   if (handle->in_transaction) {
     return false;
   }
-
-  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(dbh->driver_data, zstr_start_transaction, &rs)))  {
+  tidb_serverless_handle_reset_session(handle);
+  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(handle, zstr_begin, &rs)))  {
     return false;
   }
   handle->in_transaction = true;
@@ -257,6 +265,7 @@ static bool tidb_serverless_handle_commit(pdo_dbh_t *dbh)
   if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(dbh->driver_data, zstr_commit, &rs))) {
     return false;
   }
+  tidb_serverless_handle_reset_session(handle);
   handle->in_transaction = false;
   return true;
 }
@@ -264,9 +273,12 @@ static bool tidb_serverless_handle_commit(pdo_dbh_t *dbh)
 static bool tidb_serverless_handle_rollback(pdo_dbh_t *dbh)
 {
   pdo_tidb_serverless_result *rs = NULL;
-  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(dbh->driver_data, zstr_rollback, &rs))) {
+  pdo_tidb_serverless_db_handle *handle = (pdo_tidb_serverless_db_handle *)dbh->driver_data;
+  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(handle, zstr_rollback, &rs))) {
     return false;
   }
+  tidb_serverless_handle_reset_session(handle);
+  handle->in_transaction = false;
   return true;
 }
 

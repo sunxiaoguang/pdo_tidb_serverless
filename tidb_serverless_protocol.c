@@ -22,6 +22,9 @@
 #include "pdo/php_pdo_driver.h"
 #include "php_pdo_tidb_serverless.h"
 #include "php_pdo_tidb_serverless_int.h"
+#include "zend_smart_str.h"
+
+#define TIDB_SESSION_HEADER "TiDB-Session: "
 
 static zend_string *zstr_curl_init;
 static zend_string *zstr_curl_setopt;
@@ -197,7 +200,6 @@ zend_result serialize_body(zval *json, const zend_string *sql)
   result = call_user_function_helper(zstr_json_encode, &zarray, 1, json);
 
   zval_ptr_dtor(&zarray);
-  zval_ptr_dtor(&zsql);
 
   return result;
 }
@@ -307,6 +309,7 @@ static zend_result extract_session_if_any(zval *headers, zend_string **session, 
   char *session_header = NULL;
   char *session_start = NULL;
   char *session_end = NULL;
+  smart_str new_session = {0};
 
   if (Z_TYPE_P(headers) != IS_STRING) {
     zend_throw_exception_ex(NULL, 0, "Invalid response headers");
@@ -323,11 +326,17 @@ static zend_result extract_session_if_any(zval *headers, zend_string **session, 
       session_end -= 1;
     }
 
-    if (*session == NULL || strncmp(ZSTR_VAL(*session), session_start, session_end - session_start) != 0) {
+    char buffer[128];
+    memcpy(buffer, session_start, session_end - session_start);
+    buffer[session_end - session_start] = 0;
+
+    if (*session == NULL || strncmp(ZSTR_VAL(*session) + STRING_LITERAL_LENGTH(TIDB_SESSION_HEADER), session_start, session_end - session_start) != 0) {
       if (*session) {
         zend_string_release(*session);
       }
-      *session = zend_string_init(session_start, session_end - session_start, is_persistent);
+      smart_str_appendl_ex(&new_session, STRING_LITERAL_ARGS(TIDB_SESSION_HEADER), is_persistent);
+      smart_str_appendl_ex(&new_session, session_start, session_end - session_start, is_persistent);
+      *session = smart_str_extract(&new_session);
     }
   }
 

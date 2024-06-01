@@ -92,7 +92,7 @@ static int32_t pdo_tidb_serverless_stmt_fetch(pdo_stmt_t *stmt, enum pdo_fetch_o
 
   CHECK_PRECONDITION(handle->last_result, handle, ERR_NO_RESULT_SET, 0);
 
-  if (++handle->current_row == handle->last_result->rows_count) {
+  if (++handle->current_row >= handle->last_result->rows_count) {
     return 0;
   }
   return 1;
