@@ -16,6 +16,8 @@ The TiDB Serverless PDO Connector allows PHP developers to interact with TiDB Se
 
 - PHP 8.3 or newer
 - PDO extension enabled in PHP
+- curl extension enabled in PHP
+- json extension enabled in PHP
 - libutf8proc development files
 - TiDB Serverless instance with access credentials
 
@@ -27,6 +29,23 @@ To install the TiDB Serverless PDO Connector, you can build and install with the
 phpize
 configure
 make install
+```
+
+To enable `pdo_tidb_serverless` extension, add the following line to php.ini
+
+```ini
+extension=pdo_tidb_serverless
+```
+
+Verify whether the `pdo_tidb_serverless` extension has been successfully loaded using the following command:
+
+```bash
+root@localhost:/root# php -m
+
+[PHP Modules]
+......
+pdo_tidb_serverless
+......
 ```
 
 ## Configuration
