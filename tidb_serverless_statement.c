@@ -161,8 +161,6 @@ static int32_t pdo_tidb_serverless_stmt_col_meta(pdo_stmt_t *stmt, zend_long col
   add_assoc_long(return_value, "pdo_type", param_type);
   add_assoc_zval(return_value, "flags", &flags);
 
-  zval_ptr_dtor(&flags);
-
   return SUCCESS;
 }
 

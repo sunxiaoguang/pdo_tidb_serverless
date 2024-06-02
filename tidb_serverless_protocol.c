@@ -383,10 +383,7 @@ static zend_result execute_query(pdo_tidb_serverless_db_handle *handle, zval *he
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, extract_session_if_any(&zresponse_headers, session, handle->pdo->is_persistent));
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, deserialize_response(&zresponse_body, &zresponse_object));
 
-  if (*rs) {
-    pefree(*rs, handle->pdo->is_persistent);
-    *rs = NULL;
-  }
+  pdo_tidb_serverless_free_result(rs, handle->pdo->is_persistent);
   *rs = pecalloc(sizeof(pdo_tidb_serverless_result), 1, handle->pdo->is_persistent);
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, populate_resultset_from_zval(&zresponse_object, *rs, handle->pdo->is_persistent));
 
@@ -402,6 +399,10 @@ cleanup_exit:
   zval_ptr_dtor(&zresponse_headers_length);
   zval_ptr_dtor(&zresponse_body);
   zval_ptr_dtor(&zresponse_object);
+
+  if (TIDB_SERVERLESS_FAILED(result)) {
+    pdo_tidb_serverless_free_result(rs, handle->pdo->is_persistent);
+  }
 
   return result;
 }
@@ -447,6 +448,12 @@ void pdo_tidb_serverless_free_result(pdo_tidb_serverless_result **r, bool is_per
     pefree(result->rows[ridx], is_persistent);
   }
   pefree(result->rows, is_persistent);
+  for (fidx = 0; fidx < result->columns_count; ++fidx) {
+    pefree(result->columns[fidx].type, is_persistent);
+    pefree(result->columns[fidx].name, is_persistent);
+  }
+  pefree(result->columns, is_persistent);
+  pefree(result, is_persistent);
   *r = NULL;
 }
 

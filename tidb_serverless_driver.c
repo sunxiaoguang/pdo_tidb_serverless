@@ -94,6 +94,14 @@ static void tidb_serverless_handle_closer(pdo_dbh_t *dbh)
   pdo_tidb_serverless_db_handle *handle = (pdo_tidb_serverless_db_handle *)dbh->driver_data;
 
   if (handle) {
+    if (handle->zstr_username) zend_string_release_ex(handle->zstr_username, dbh->is_persistent);
+    if (handle->zstr_password) zend_string_release_ex(handle->zstr_password, dbh->is_persistent);
+    if (handle->zstr_url) zend_string_release_ex(handle->zstr_url, dbh->is_persistent);
+    if (handle->zstr_connection_status) zend_string_release_ex(handle->zstr_connection_status, dbh->is_persistent);
+    if (handle->zstr_header_database) zend_string_release_ex(handle->zstr_header_database, dbh->is_persistent);
+    if (handle->zstr_header_session) zend_string_release_ex(handle->zstr_header_session, dbh->is_persistent);
+    if (handle->zstr_server_version) zend_string_release_ex(handle->zstr_server_version, dbh->is_persistent);
+    pdo_tidb_serverless_free_result(&handle->last_result, dbh->is_persistent);
     pefree(handle, dbh->is_persistent);
     dbh->driver_data = NULL;
   }
@@ -188,7 +196,11 @@ static ssize_t tidb_serverless_escape_string(const char *f, size_t from_length, 
         escape = 'Z';
         break;
       case '\\':
+        escape = '\\';
+        break;
       case '\'':
+        escape = '\'';
+        break;
       case '"':
         escape = '"';
         break;
@@ -418,16 +430,17 @@ static int32_t pdo_tidb_serverless_handle_factory(pdo_dbh_t *dbh, zval *driver_o
   // fetch server version
   TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, zstr_select_version, &rs));
   handle->zstr_server_version = zend_string_init(rs->rows[0][0], strlen(rs->rows[0][0]), dbh->is_persistent);
+  pdo_tidb_serverless_free_result(&rs, dbh->is_persistent);
 
   TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, zstr_show_sql_mode, &rs));
   sql_mode_string = rs->rows[0][1];
-
   while ((sql_mode = strsep(&sql_mode_string, ",")) != NULL) {
     if (strcasecmp(sql_mode, "NO_BACKSLASH_ESCAPES") == 0) {
       handle->no_backslash_escapes = true;
       break;
     }
   }
+  pdo_tidb_serverless_free_result(&rs, dbh->is_persistent);
 
   ret = 1;
 
