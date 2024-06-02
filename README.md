@@ -16,6 +16,7 @@ The TiDB Serverless PDO Connector allows PHP developers to interact with TiDB Se
 
 - PHP 8.3 or newer
 - PDO extension enabled in PHP
+- libutf8proc development files
 - TiDB Serverless instance with access credentials
 
 ## Installation
