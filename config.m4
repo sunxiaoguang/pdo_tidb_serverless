@@ -13,8 +13,7 @@ if test "$PHP_PDO_TIDB_SERVERLESS" != "no"; then
     AC_MSG_ERROR(pdo_tidb_serverless module requires libutf8proc)
   ], [])
 
-  PHP_ADD_LIBRARY(utf8proc, 1, LIBUTF8PROC_SHARED_LIBADD)
-  PHP_SUBST(LIBUTF8PROC_SHARED_LIBADD)
+  PHP_ADD_LIBRARY(utf8proc, 1, PDO_TIDB_SERVERLESS_SHARED_LIBADD)
 
   PHP_CHECK_PDO_INCLUDES
 
