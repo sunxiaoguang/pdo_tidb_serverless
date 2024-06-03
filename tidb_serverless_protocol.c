@@ -81,7 +81,7 @@ void tidb_serverless_protocol_init()
   REGISTER_STRING2(curlinfo_header_size, "CURLINFO_HEADER_SIZE");
   REGISTER_STRING2(curlinfo_http_code, "CURLINFO_HTTP_CODE");
   REGISTER_STRING2(content_type, "Content-Type: application/json");
-  REGISTER_STRING2(user_agent, "User-Agent: serverless-js/0.0.10");
+  REGISTER_STRING2(user_agent, "User-Agent: serverless-php/0.0.10");
   REGISTER_STRING(query);
 }
 
