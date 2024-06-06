@@ -34,6 +34,8 @@ typedef struct
   const char *file;
   int32_t line;
   uint32_t errcode;
+  uint32_t sqlcode;
+  char *message;
 } pdo_tidb_serverless_error_info;
 
 /* stuff we use in a database handle */
@@ -80,20 +82,24 @@ typedef struct pdo_tidb_serverless_result
 
 typedef struct
 {
+  pdo_stmt_t *pdo;
   pdo_tidb_serverless_db_handle *handle;
   pdo_tidb_serverless_result *last_result;
   off_t current_row;
+
+  pdo_tidb_serverless_error_info einfo;
 } pdo_tidb_serverless_stmt;
 
 extern const pdo_driver_t pdo_tidb_serverless_driver;
 
-extern int32_t _pdo_tidb_serverless_error(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, uint32_t errcode, const char *file, int32_t line);
-#define pdo_tidb_serverless_error(s, c) _pdo_tidb_serverless_error((s), NULL, (c), __FILE__, __LINE__)
-#define pdo_tidb_serverless_error_stmt(s, c) _pdo_tidb_serverless_error((s)->handle, s, (c), __FILE__, __LINE__)
+extern int32_t _pdo_tidb_serverless_error(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, uint32_t errcode, uint32_t sqlcode, const char *sqlstate, char *message, const char *file, int32_t line);
+#define pdo_tidb_serverless_error(h, c) _pdo_tidb_serverless_error((h), NULL, (c), (c), NULL, NULL, __FILE__, __LINE__)
+#define pdo_tidb_serverless_error_stmt(s, c) _pdo_tidb_serverless_error((s)->handle, (s), (c), (c), NULL, NULL, __FILE__, __LINE__)
+#define pdo_tidb_serverless_error_protocol(h, s, c, sc, ss, m) _pdo_tidb_serverless_error((h), (s), c, sc, ss, m, __FILE__, __LINE__)
 
 extern const struct pdo_stmt_methods tidb_serverless_stmt_methods;
 
-extern zend_result tidb_serverless_db_execute(pdo_tidb_serverless_db_handle *handle, const zend_string *sql, pdo_tidb_serverless_result **result);
+extern zend_result tidb_serverless_db_execute(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, const zend_string *sql, pdo_tidb_serverless_result **result);
 extern void pdo_tidb_serverless_free_result(pdo_tidb_serverless_result **result, bool is_persistent);
 extern void tidb_serverless_protocol_init();
 extern void tidb_serverless_protocol_shutdown();
@@ -132,6 +138,7 @@ extern void tidb_serverless_driver_shutdown();
 #define ERR_NO_RESULT_SET 2053
 #define ERR_INVALID_PARAMETER_NO 2034
 #define ERR_INVALID_UTF8MB4_ENCODING 2074
+#define ERR_UNKNOW_PROTOCOL 2047
 
 extern const char *tidb_serverless_errmsg(uint32_t code);
 

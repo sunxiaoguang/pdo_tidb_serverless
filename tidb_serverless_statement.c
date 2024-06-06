@@ -45,9 +45,13 @@ static const char *INTEGER_TYPES[] = {
 
 static int32_t pdo_tidb_serverless_stmt_dtor(pdo_stmt_t *stmt)
 {
+  bool is_persistent = stmt->dbh->is_persistent;
   pdo_tidb_serverless_stmt *handle = (pdo_tidb_serverless_stmt*)stmt->driver_data;
-  pdo_tidb_serverless_free_result(&handle->last_result, stmt->dbh->is_persistent);
-  pefree(handle, stmt->dbh->is_persistent);
+  pdo_tidb_serverless_free_result(&handle->last_result, is_persistent);
+  if (handle->einfo.message) {
+    pefree(handle->einfo.message, is_persistent);
+  }
+  pefree(handle, is_persistent);
   return 1;
 }
 
@@ -73,7 +77,7 @@ static int32_t pdo_tidb_serverless_stmt_execute(pdo_stmt_t *stmt)
   pdo_tidb_serverless_stmt *handle = (pdo_tidb_serverless_stmt *)stmt->driver_data;
 
   pdo_tidb_serverless_free_result(&handle->last_result, stmt->dbh->is_persistent);
-  TIDB_SERVERLESS_DO_RETURN(0, tidb_serverless_db_execute(handle->handle, stmt->active_query_string, &handle->last_result));
+  TIDB_SERVERLESS_DO_RETURN(0, tidb_serverless_db_execute(handle->handle, handle, stmt->active_query_string, &handle->last_result));
   return pdo_tidb_serverless_fill_stmt_from_result(stmt);
 }
 

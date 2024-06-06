@@ -52,26 +52,42 @@ void tidb_serverless_driver_shutdown()
   zend_string_release(zstr_show_sql_mode);
 }
 
-int32_t _pdo_tidb_serverless_error(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, uint32_t errcode, const char *file, int32_t line)
+int32_t _pdo_tidb_serverless_error(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, uint32_t errcode, uint32_t sqlcode, const char *sqlstate, char *message, const char *file, int32_t line)
 {
+  /* file and line are not used at this time */
+
   pdo_dbh_t *dbh = handle->pdo;
+  bool is_persistent = dbh->is_persistent;
   pdo_error_type *pdo_err;
   pdo_tidb_serverless_error_info *einfo;
-
-  pdo_err = &dbh->error_code;
-  einfo = &handle->einfo;
+  if (stmt) {
+    pdo_err = &stmt->pdo->error_code;
+    einfo = &stmt->einfo;
+  } else {
+    pdo_err = &dbh->error_code;
+    einfo = &handle->einfo;
+  }
 
   einfo->file = file;
   einfo->line = line;
   einfo->errcode = errcode;
+  einfo->sqlcode = sqlcode;
 
-  // Serverless driver not support SQLSTATE yet
-  strcpy(*pdo_err, "08S01");
+  if (sqlstate == NULL) {
+    // Client side error or errors without SQLSTATE
+    sqlstate = "08S01";
+  }
+  strncpy(*pdo_err, sqlstate, sizeof(*pdo_err) - 1);
+
+  if (einfo->message) {
+    pefree(einfo->message, is_persistent);
+  }
+  einfo->message = message ? message : pestrdup(tidb_serverless_errmsg(errcode), is_persistent);
 
   if (!dbh->methods) {
     // Throw an exception in constructor.
     // We know pdo_throw_exception doesn't modify errmsg so we can simply cast and remove const
-    pdo_throw_exception(einfo->errcode, (char *) tidb_serverless_errmsg(errcode), pdo_err);
+    pdo_throw_exception(einfo->errcode, einfo->message, pdo_err);
   }
 
   return einfo->errcode;
@@ -80,11 +96,11 @@ int32_t _pdo_tidb_serverless_error(pdo_tidb_serverless_db_handle *handle, pdo_ti
 static void pdo_tidb_serverless_fetch_error_func(pdo_dbh_t *dbh, pdo_stmt_t *stmt, zval *info)
 {
   pdo_tidb_serverless_db_handle *handle = (pdo_tidb_serverless_db_handle *)dbh->driver_data;
-  pdo_tidb_serverless_error_info *einfo = &handle->einfo;
+  pdo_tidb_serverless_error_info *einfo = stmt ? &((pdo_tidb_serverless_stmt *)stmt->driver_data)->einfo : &handle->einfo;
 
   if (einfo->errcode) {
-    add_next_index_long(info, einfo->errcode);
-    add_next_index_string(info, tidb_serverless_errmsg(einfo->errcode));
+    add_next_index_long(info, einfo->sqlcode ? einfo->sqlcode : einfo->errcode);
+    add_next_index_string(info, einfo->message);
   }
   return;
 }
@@ -92,17 +108,19 @@ static void pdo_tidb_serverless_fetch_error_func(pdo_dbh_t *dbh, pdo_stmt_t *stm
 static void tidb_serverless_handle_closer(pdo_dbh_t *dbh)
 {
   pdo_tidb_serverless_db_handle *handle = (pdo_tidb_serverless_db_handle *)dbh->driver_data;
+  bool is_persistent = dbh->is_persistent;
 
   if (handle) {
-    if (handle->zstr_username) zend_string_release_ex(handle->zstr_username, dbh->is_persistent);
-    if (handle->zstr_password) zend_string_release_ex(handle->zstr_password, dbh->is_persistent);
-    if (handle->zstr_url) zend_string_release_ex(handle->zstr_url, dbh->is_persistent);
-    if (handle->zstr_connection_status) zend_string_release_ex(handle->zstr_connection_status, dbh->is_persistent);
-    if (handle->zstr_header_database) zend_string_release_ex(handle->zstr_header_database, dbh->is_persistent);
-    if (handle->zstr_header_session) zend_string_release_ex(handle->zstr_header_session, dbh->is_persistent);
-    if (handle->zstr_server_version) zend_string_release_ex(handle->zstr_server_version, dbh->is_persistent);
-    pdo_tidb_serverless_free_result(&handle->last_result, dbh->is_persistent);
-    pefree(handle, dbh->is_persistent);
+    if (handle->zstr_username) zend_string_release_ex(handle->zstr_username, is_persistent);
+    if (handle->zstr_password) zend_string_release_ex(handle->zstr_password, is_persistent);
+    if (handle->zstr_url) zend_string_release_ex(handle->zstr_url, is_persistent);
+    if (handle->zstr_connection_status) zend_string_release_ex(handle->zstr_connection_status, is_persistent);
+    if (handle->zstr_header_database) zend_string_release_ex(handle->zstr_header_database, is_persistent);
+    if (handle->zstr_header_session) zend_string_release_ex(handle->zstr_header_session, is_persistent);
+    if (handle->zstr_server_version) zend_string_release_ex(handle->zstr_server_version, is_persistent);
+    if (handle->einfo.message) pefree(handle->einfo.message, is_persistent);
+    pdo_tidb_serverless_free_result(&handle->last_result, is_persistent);
+    pefree(handle, is_persistent);
     dbh->driver_data = NULL;
   }
 }
@@ -113,6 +131,7 @@ static bool tidb_serverless_handle_preparer(pdo_dbh_t *dbh, zend_string *sql, pd
   pdo_tidb_serverless_stmt *s = ecalloc(1, sizeof(pdo_tidb_serverless_stmt));
 
   s->handle = handle;
+  s->pdo = stmt;
   stmt->driver_data = s;
   stmt->methods = &tidb_serverless_stmt_methods;
   stmt->supports_placeholders = PDO_PLACEHOLDER_NONE;
@@ -124,7 +143,7 @@ static zend_long tidb_serverless_handle_doer(pdo_dbh_t *dbh, const zend_string *
   pdo_tidb_serverless_db_handle *handle = (pdo_tidb_serverless_db_handle *)dbh->driver_data;
   zend_result zres;
 
-  TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, sql, &handle->last_result));
+  TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, NULL, sql, &handle->last_result));
   if (handle->last_result) {
     return handle->last_result->rows_affected;
   }
@@ -260,9 +279,10 @@ static bool tidb_serverless_handle_begin(pdo_dbh_t *dbh)
     return false;
   }
   tidb_serverless_handle_reset_session(handle);
-  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(handle, zstr_begin, &rs)))  {
+  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(handle, NULL, zstr_begin, &rs)))  {
     return false;
   }
+  pdo_tidb_serverless_free_result(&rs, dbh->is_persistent);
   handle->in_transaction = true;
   return true;
 }
@@ -274,9 +294,10 @@ static bool tidb_serverless_handle_commit(pdo_dbh_t *dbh)
   if (!handle->in_transaction) {
     return false;
   }
-  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(dbh->driver_data, zstr_commit, &rs))) {
+  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(dbh->driver_data, NULL, zstr_commit, &rs))) {
     return false;
   }
+  pdo_tidb_serverless_free_result(&rs, dbh->is_persistent);
   tidb_serverless_handle_reset_session(handle);
   handle->in_transaction = false;
   return true;
@@ -286,9 +307,10 @@ static bool tidb_serverless_handle_rollback(pdo_dbh_t *dbh)
 {
   pdo_tidb_serverless_result *rs = NULL;
   pdo_tidb_serverless_db_handle *handle = (pdo_tidb_serverless_db_handle *)dbh->driver_data;
-  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(handle, zstr_rollback, &rs))) {
+  if (TIDB_SERVERLESS_FAILED(tidb_serverless_db_execute(handle, NULL, zstr_rollback, &rs))) {
     return false;
   }
+  pdo_tidb_serverless_free_result(&rs, dbh->is_persistent);
   tidb_serverless_handle_reset_session(handle);
   handle->in_transaction = false;
   return true;
@@ -428,11 +450,11 @@ static int32_t pdo_tidb_serverless_handle_factory(pdo_dbh_t *dbh, zval *driver_o
   dbh->methods = &tidb_serverless_methods;
 
   // fetch server version
-  TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, zstr_select_version, &rs));
+  TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, NULL, zstr_select_version, &rs));
   handle->zstr_server_version = zend_string_init(rs->rows[0][0], strlen(rs->rows[0][0]), dbh->is_persistent);
   pdo_tidb_serverless_free_result(&rs, dbh->is_persistent);
 
-  TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, zstr_show_sql_mode, &rs));
+  TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, NULL, zstr_show_sql_mode, &rs));
   sql_mode_string = rs->rows[0][1];
   while ((sql_mode = strsep(&sql_mode_string, ",")) != NULL) {
     if (strcasecmp(sql_mode, "NO_BACKSLASH_ESCAPES") == 0) {

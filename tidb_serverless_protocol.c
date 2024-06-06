@@ -53,6 +53,10 @@ static zend_string *zstr_curlinfo_http_code;
 static zend_string *zstr_content_type;
 static zend_string *zstr_user_agent;
 static zend_string *zstr_query;
+static zend_string *zstr_code;
+static zend_string *zstr_message;
+static zend_string *zstr_preg_match;
+static zend_string *zstr_error_code_pattern;
 
 void tidb_serverless_protocol_init()
 {
@@ -83,6 +87,10 @@ void tidb_serverless_protocol_init()
   REGISTER_STRING2(content_type, "Content-Type: application/json");
   REGISTER_STRING2(user_agent, "User-Agent: serverless-php/0.0.10");
   REGISTER_STRING(query);
+  REGISTER_STRING(code);
+  REGISTER_STRING(message);
+  REGISTER_STRING(preg_match);
+  REGISTER_STRING2(error_code_pattern, "/((?i)ERROR(?-i) (\\d+) \\((\\w+)\\):\\s+).*/");
 }
 
 void tidb_serverless_protocol_shutdown()
@@ -113,6 +121,10 @@ void tidb_serverless_protocol_shutdown()
   zend_string_release(zstr_curlinfo_http_code);
   zend_string_release(zstr_content_type);
   zend_string_release(zstr_user_agent);
+  zend_string_release(zstr_code);
+  zend_string_release(zstr_message);
+  zend_string_release(zstr_preg_match);
+  zend_string_release(zstr_error_code_pattern);
 }
 
 zend_result call_user_function_helper(zend_string *function, zval *params, size_t num_params, zval *response)
@@ -182,7 +194,6 @@ zend_result call_split_str(zval *str, zval *at, zval *left, zval *right)
   zval params[3];
   zend_result result;
 
-  memset(params, 0, sizeof(params));
   ZVAL_COPY_VALUE(params, str);
   ZVAL_LONG(params + 1, 0);
   ZVAL_COPY_VALUE(params + 2, at);
@@ -307,6 +318,65 @@ static zend_result populate_resultset_from_zval(zval *object, pdo_tidb_serverles
   return SUCCESS;
 }
 
+static void extract_error_from_zval(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, zval *response)
+{
+  zval zerror, zmatched, zmatches, params[3], *zcode, *zmessage, *zsqlstate, *zmatched_message, *zmatches_ptr, *zprefix;
+  HashTable *matches = NULL;
+  zend_class_entry *ce = NULL;
+  zend_object *obj = NULL;
+  char *message = NULL;
+  char *sqlstate = NULL;
+  uint32_t errcode = ERR_UNKNOW_PROTOCOL, sqlcode = ERR_UNKNOW_PROTOCOL;
+  bool is_persistent = handle->pdo->is_persistent;
+  ZVAL_UNDEF(&zerror);
+  ZVAL_UNDEF(&zmatched);
+  ZVAL_UNDEF(&zmatches);
+
+  if (TIDB_SERVERLESS_FAILED(call_user_function_helper(zstr_json_decode, response, 1, &zerror))) {
+    message = pestrndup(Z_STRVAL_P(response), Z_STRLEN_P(response), is_persistent);
+    goto cleanup_exit;
+  }
+  ce = Z_OBJCE(zerror);
+  obj = Z_OBJ(zerror);
+  zcode = zend_read_property_ex(ce, obj, zstr_code, true, NULL);
+  zmessage = zend_read_property_ex(ce, obj, zstr_message, true, NULL);
+
+  if (!zcode || Z_TYPE_P(zcode) == IS_NULL || !zmessage || Z_TYPE_P(zmessage) == IS_NULL) {
+    message = pestrndup(Z_STRVAL_P(response), Z_STRLEN_P(response), is_persistent);
+    goto cleanup_exit;
+  }
+  convert_to_long(zcode);
+  errcode = sqlcode = Z_LVAL_P(zcode);
+
+  ZVAL_STR_COPY(params, zstr_error_code_pattern);
+  ZVAL_COPY_VALUE(params + 1, zmessage);
+  ZVAL_NEW_REF(params + 2, &zmatches);
+  if (TIDB_SERVERLESS_FAILED(call_user_function_helper(zstr_preg_match, params, 3, &zmatched)) ||
+      Z_TYPE(zmatched) != IS_LONG || Z_LVAL(zmatched) != 1) {
+    message = pestrndup(Z_STRVAL_P(zmessage), Z_STRLEN_P(zmessage), is_persistent);
+    goto cleanup_exit;
+  }
+  zmatches_ptr = params + 2;
+  ZVAL_DEREF(zmatches_ptr);
+  matches = Z_ARR_P(zmatches_ptr);
+  zmatched_message = zend_hash_index_find(matches, 0);
+  zprefix = zend_hash_index_find(matches, 1);
+  zcode = zend_hash_index_find(matches, 2);
+  zsqlstate = zend_hash_index_find(matches, 3);
+  convert_to_long(zcode);
+  sqlcode = Z_LVAL_P(zcode);
+  sqlstate = Z_STRVAL_P(zsqlstate);
+  message = pestrndup(Z_STRVAL_P(zmatched_message) + Z_STRLEN_P(zprefix), Z_STRLEN_P(zmatched_message) - Z_STRLEN_P(zprefix), is_persistent);
+
+cleanup_exit:
+  pdo_tidb_serverless_error_protocol(handle, stmt, errcode, sqlcode, sqlstate, message);
+
+  zval_ptr_dtor(&zerror);
+  zval_ptr_dtor(&zmatched);
+  zval_ptr_dtor(params + 2);
+  return;
+}
+
 static zend_result extract_session_if_any(zval *headers, zend_string **session, bool is_persistent)
 {
   char *session_header = NULL;
@@ -346,11 +416,12 @@ static zend_result extract_session_if_any(zval *headers, zend_string **session, 
   return SUCCESS;
 }
 
-static zend_result execute_query(pdo_tidb_serverless_db_handle *handle, zval *headers, zend_string *url, zend_string *username, zend_string *password, const zend_string *sql, zend_string **session, pdo_tidb_serverless_result **rs)
+static zend_result execute_query(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, zval *headers, zend_string *url, zend_string *username, zend_string *password, const zend_string *sql, zend_string **session, pdo_tidb_serverless_result **rs)
 {
   zval ch, t, zurl, zusername, zpassword, zresponse, zbody;
   zval zhttp_code, zresponse_headers, zresponse_headers_length, zresponse_body, zresponse_object;
   zend_result result = SUCCESS;
+
   ZVAL_STR_COPY(&zusername, username);
   ZVAL_STR_COPY(&zpassword, password);
   ZVAL_STR_COPY(&zurl, url);
@@ -376,7 +447,7 @@ static zend_result execute_query(pdo_tidb_serverless_db_handle *handle, zval *he
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_curl_getinfo(&ch, zstr_curlinfo_header_size, &zresponse_headers_length));
   TIDB_SERVERLESS_DO_GOTO(result, cleanup_exit, call_split_str(&zresponse, &zresponse_headers_length, &zresponse_headers, &zresponse_body));
   if (Z_LVAL(zhttp_code) < 200 || Z_LVAL(zhttp_code) >= 300) {
-    zend_throw_exception_ex(NULL, 0, "Executing query failed: %s", Z_STRVAL(zresponse_body));
+    extract_error_from_zval(handle, stmt, &zresponse_body);
     result = FAILURE;
     goto cleanup_exit;
   }
@@ -407,7 +478,7 @@ cleanup_exit:
   return result;
 }
 
-zend_result tidb_serverless_db_execute(pdo_tidb_serverless_db_handle *handle, const zend_string *sql, pdo_tidb_serverless_result **result)
+zend_result tidb_serverless_db_execute(pdo_tidb_serverless_db_handle *handle, pdo_tidb_serverless_stmt *stmt, const zend_string *sql, pdo_tidb_serverless_result **result)
 {
   zval zheaders, zcontent_type, zuser_agent, zdatabase, zsession;
   zend_result zres;
@@ -426,7 +497,7 @@ zend_result tidb_serverless_db_execute(pdo_tidb_serverless_db_handle *handle, co
   }
   ZVAL_ARR(&zheaders, headers);
 
-  zres = execute_query(handle, &zheaders, handle->zstr_url, handle->zstr_username, handle->zstr_password, sql, &handle->zstr_header_session, result);
+  zres = execute_query(handle, stmt, &zheaders, handle->zstr_url, handle->zstr_username, handle->zstr_password, sql, &handle->zstr_header_session, result);
 
   zval_ptr_dtor(&zheaders);
 
@@ -468,6 +539,8 @@ const char *tidb_serverless_errmsg(uint32_t code)
       return "Invalid parameter number";
     case ERR_INVALID_UTF8MB4_ENCODING:
       return "Invalid utf8mb4 encoded string";
+    case ERR_UNKNOW_PROTOCOL:
+      return "Wrong or unknown protocol";
     default:
       return "Unknown error";
   }

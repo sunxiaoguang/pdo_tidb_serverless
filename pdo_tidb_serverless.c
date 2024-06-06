@@ -70,6 +70,7 @@ static const zend_module_dep pdo_tidb_serverless_deps[] = {
   ZEND_MOD_REQUIRED("pdo")
   ZEND_MOD_REQUIRED("json")
   ZEND_MOD_REQUIRED("curl")
+  ZEND_MOD_REQUIRED("pcre")
 ZEND_MOD_END};
 
 zend_module_entry pdo_tidb_serverless_module_entry = {
