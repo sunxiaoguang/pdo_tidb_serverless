@@ -330,6 +330,7 @@ static void extract_error_from_zval(pdo_tidb_serverless_db_handle *handle, pdo_t
   bool is_persistent = handle->pdo->is_persistent;
   ZVAL_UNDEF(&zerror);
   ZVAL_UNDEF(&zmatched);
+  memset(&zmatches, 0, sizeof(zmatches));
   ZVAL_UNDEF(&zmatches);
 
   if (TIDB_SERVERLESS_FAILED(call_user_function_helper(zstr_json_decode, response, 1, &zerror))) {

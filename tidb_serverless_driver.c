@@ -77,7 +77,7 @@ int32_t _pdo_tidb_serverless_error(pdo_tidb_serverless_db_handle *handle, pdo_ti
     // Client side error or errors without SQLSTATE
     sqlstate = "08S01";
   }
-  strncpy(*pdo_err, sqlstate, sizeof(*pdo_err) - 1);
+  snprintf(*pdo_err, sizeof(*pdo_err), "%s", sqlstate);
 
   if (einfo->message) {
     pefree(einfo->message, is_persistent);
@@ -447,7 +447,6 @@ static int32_t pdo_tidb_serverless_handle_factory(pdo_dbh_t *dbh, zval *driver_o
 
   dbh->alloc_own_columns = 1;
   dbh->max_escaped_char_length = 2;
-  dbh->methods = &tidb_serverless_methods;
 
   // fetch server version
   TIDB_SERVERLESS_DO_GOTO(zres, cleanup_exit, tidb_serverless_db_execute(handle, NULL, zstr_select_version, &rs));
